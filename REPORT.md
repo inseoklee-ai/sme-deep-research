@@ -378,6 +378,7 @@ flowchart LR
 ## 10. 데모 설계
 
 `streamlit run app.py` → `http://localhost:8501`. 실행법과 화면 전체는 [README.md](README.md).
+**공개 배포**: https://sme-deep-research-52pwp9cxzm7krbu7je4jcz.streamlit.app/ (Streamlit Community Cloud, 공개 모드 — 방문자가 자기 키로 돌린다)
 
 | 화면 | 신경 쓴 점 |
 |---|---|
