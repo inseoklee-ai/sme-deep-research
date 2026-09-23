@@ -21,3 +21,6 @@ Thumbs.db
 # 에디터 도구 설정
 .claude/
 output/dev/streamlit.log
+
+# Streamlit 비밀값 — 저장소에 올리지 않는다
+.streamlit/secrets.toml

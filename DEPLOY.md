@@ -28,11 +28,13 @@
 
 4. **Advanced settings** 를 연다.
    - **Python version**: `3.12` (개발·시험한 판)
-   - **Secrets** 칸에 아래 한 줄만 넣는다.
+   - **Secrets** 칸에 아래 한 줄만 넣는다. 앞에 `Secrets:` 같은 글자를 붙이지 않고, **키보드로 직접 친다** — 채팅·문서에서 복사하면 따옴표가 둥근 따옴표(`“ ”`)로 바뀌어 "Invalid format: please enter valid TOML" 이 난다.
 
      ```toml
-     DEMO_PUBLIC = "1"
+     DEMO_PUBLIC = 1
      ```
+
+     `DEMO_PUBLIC = "1"` 이나 `DEMO_PUBLIC = true` 도 된다(앱이 셋 다 공개 모드로 읽는다).
 
    > ⚠️ **Secrets 에 `OPENAI_API_KEY` 를 넣지 않는다.** 넣으면 '이 PC 의 키' 경로로 주인 키가 쓰일 수 있다. 방문자는 화면에서 자기 키를 넣는다.
 

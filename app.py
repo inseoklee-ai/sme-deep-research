@@ -44,7 +44,17 @@ st.set_page_config(page_title="중소기업 AI 딥리서처", page_icon="🔎", 
 
 내키 = "내 OpenAI API 키 입력"
 PC키 = "이 PC 의 keys.env 키"
-공개 = os.getenv("DEMO_PUBLIC") == "1" or os.getenv("DEMO_HIDE_LOCAL_KEY") == "1"
+def _공개모드() -> bool:
+    """DEMO_PUBLIC 을 환경 변수와 Streamlit Secrets 양쪽에서 읽는다. "1" · 1 · true 모두 켠 것으로 본다."""
+    값들 = [os.getenv("DEMO_PUBLIC"), os.getenv("DEMO_HIDE_LOCAL_KEY")]
+    try:
+        값들.append(st.secrets.get("DEMO_PUBLIC"))
+    except Exception:                             # 로컬에 secrets.toml 이 없으면 st.secrets 가 예외를 낸다
+        pass
+    return any(str(v).strip().strip('"').lower() in ("1", "true", "yes") for v in 값들 if v is not None)
+
+
+공개 = _공개모드()
 
 
 def 키고르기() -> str | None:
