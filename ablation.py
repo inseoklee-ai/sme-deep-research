@@ -46,6 +46,10 @@ REPORTS = G.OUT / "reports" / "ablation"
 조건들 = list(팀조건) + list(혼자조건)
 반복수 = 3
 
+# 실험 2 — 실험 1 에서 재위임이 한 번도 열리지 않아(부족 신고 0/96), 코드 판정을 더해 재위임만 다시 잰다.
+# 두 조건 모두 같은 코드 판정 설정 — 다른 것은 재위임 켜고 끔 하나뿐이다.
+실험2 = {"기본": {"부족_판정": "자기신고+코드"}, "재위임끔": {"부족_판정": "자기신고+코드", "재위임": False}}
+
 # 지표 규칙의 지문 — 실험 도중 문장 분리·지표 코드가 바뀌면 기록마다 달라져서 드러난다
 지표지문 = hashlib.sha1((inspect.getsource(G.문장들) + inspect.getsource(M)).encode()).hexdigest()[:10]
 
@@ -193,7 +197,24 @@ def 요약(done: dict) -> dict:
             if len(xs) >= 2:
                 흔들림.setdefault(qid, {})[조건] = round(max(xs) - min(xs), 1)
 
+    재위임 = {}
+    for 조건 in 조건들:
+        rs = [r for r in runs if r["실험"]["조건"] == 조건 and r.get("sections")]
+        if not rs:
+            continue
+        출처 = {}
+        for r in rs:
+            for sec in r["sections"]:
+                if not sec.get("충분", True):
+                    k = (sec.get("부족_출처") or "자기신고").split(" ")[0]
+                    출처[k] = 출처.get(k, 0) + 1
+        판정 = [x["결과"] for r in rs for x in r.get("원고판정", [])]
+        재위임[조건] = {"재위임_일어난_실행": sum(1 for r in rs if any(s.get("바퀴", 1) > 1 for s in r["sections"])),
+                        "실행수": len(rs), "부족_신고_출처": 출처,
+                        "재위임본_채택": 판정.count("채택"), "재위임본_기각": 판정.count("기각")}
+
     return {"생성": datetime.now().isoformat(timespec="seconds"), "지표지문": 지표지문, "실행수": len(runs),
+            "재위임": 재위임,
             "조건별": 묶어(lambda r: True),
             "유형별": {u: 묶어(lambda r, u=u: 유형.get(r["실험"]["qid"]) == u) for u in dict.fromkeys(유형.values())},
             "질문별": {qid: 묶어(lambda r, qid=qid: r["실험"]["qid"] == qid) for qid in G.QUESTIONS},
@@ -222,7 +243,14 @@ def main():
     ap.add_argument("--only", nargs="*", help="질문 ID 일부만")
     ap.add_argument("--workers", type=int, default=3, help="동시에 도는 (질문, 반복) 묶음 수")
     ap.add_argument("--summary", action="store_true", help="새로 돌리지 않고 요약만")
+    ap.add_argument("--exp", type=int, default=1, help="1: 조건 7가지 · 2: 코드 판정을 더한 재위임 켜고 끔")
     a = ap.parse_args()
+    if a.exp == 2:
+        global RUNS, ERRS, SUMMARY, REPORTS, 팀조건, 혼자조건, 조건들
+        RUNS, ERRS = G.OUT / "ablation2_runs.jsonl", G.OUT / "ablation2_errors.jsonl"
+        SUMMARY, REPORTS = G.OUT / "ablation2.json", G.OUT / "reports" / "ablation2"
+        팀조건, 혼자조건 = dict(실험2), {}
+        조건들 = list(팀조건)
     done = 불러오기()
     qids = a.only or list(G.QUESTIONS)
     if not a.summary:

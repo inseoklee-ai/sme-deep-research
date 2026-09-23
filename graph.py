@@ -494,7 +494,19 @@ def researcher(s: dict) -> dict:
            "충분": 원고["충분"], "부족": 원고["부족"], "인용형식교정": 원고["교정"], "근거없는문장": 원고["빈근거"],
            "대체선택": sum(1 for r in recs if r.get("대체"))}
     sec["근거문장수"] = 근거문장수(sec)
-    mark = "충분" if sec["충분"] else f"부족({sec['부족'][:24]})"
+    sec["부족_출처"] = "" if sec["충분"] else "자기신고"
+    if s["설정"].get("부족_판정") == "자기신고+코드" and sec["충분"]:
+        # 실험 1 에서 자기신고가 96절 중 한 번도 '부족'을 말하지 않아 재위임 루프가 열리지 않았다 —
+        # 코드가 셀 수 있는 두 가지 빈 칸 신호를 더한다
+        새메모 = [m for d, m in notes if d in 새로]
+        무관 = sum(1 for m in 새메모 if m.strip().startswith("관련 없음"))
+        if 새메모 and 무관 / len(새메모) >= CFG["코드판정_관련없음비율"]:
+            sec.update(충분=False, 부족=f"이번에 읽은 {len(새메모)}건 중 {무관}건이 지시와 관련 없었다",
+                       부족_출처=f"코드: 관련 없음 {무관}/{len(새메모)}")
+        elif sec["근거문장수"] < CFG["코드판정_최소근거문장"]:
+            sec.update(충분=False, 부족=f"근거가 붙은 문장이 {sec['근거문장수']}개뿐이다",
+                       부족_출처=f"코드: 근거문장 {sec['근거문장수']}")
+    mark = "충분" if sec["충분"] else f"부족({sec['부족_출처']}: {sec['부족'][:20]})"
     return {"sections": [sec], "calls": recs + [rec],
             "visited": [[t["번호"], d] for d in 새로],
             "log": [f"   ③ {t['역할']} «{t['절'][:16]}» 새로 {len(새로)}/{t['예산']}건 (누적 {len(read)}) · "
@@ -602,7 +614,7 @@ def build():
 
 
 def 설정만들기(덮어쓸: dict | None = None) -> dict:
-    st = {k: CFG[k] for k in ("절수", "절예산", "절예산_최대", "바퀴_상한", "원고_정책")} | dict(CFG["스위치"])
+    st = {k: CFG[k] for k in ("절수", "절예산", "절예산_최대", "바퀴_상한", "원고_정책", "부족_판정")} | dict(CFG["스위치"])
     for k, v in (덮어쓸 or {}).items():
         if k not in st:
             raise KeyError(f"모르는 설정: {k} (가능: {', '.join(st)})")
