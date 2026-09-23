@@ -1,0 +1,62 @@
+■ 시드
+  [시드·ko] 중소기업  9,549자
+  [시드·ko] 스마트팩토리  3,095자
+  [시드·ko] 전사적 자원 관리  12,536자
+  [시드·ko] 사물인터넷  6,173자
+  [시드·ko] 빅 데이터  13,366자
+  [시드·ko] 클라우드 컴퓨팅  21,417자
+  [시드·ko] 자동화  6,788자
+  [시드·ko] 생성형 인공지능  6,301자
+  [시드·ko] 에지 컴퓨팅  4,550자
+  [시드·ko] 인공지능  40,641자
+  [시드·ko] 기계 학습  26,790자
+  [시드·ko] 로봇공학  25,293자
+  [시드·en] Small and medium enterprises  26,774자
+  [시드·en] Digital transformation  9,148자
+  [시드·en] Fourth Industrial Revolution  27,256자
+  [시드·en] Artificial intelligence in industry  8,199자
+  [시드·en] Smart manufacturing  8,162자
+  [시드·en] Industrial internet of things  16,654자
+  [시드·en] Manufacturing execution system  9,671자
+  [시드·en] Predictive maintenance  11,928자
+  [시드·en] Condition monitoring  17,196자
+  [시드·en] Digital twin  18,289자
+  [시드·en] Machine vision  12,108자
+  [시드·en] Cobot  6,976자
+  [시드·en] Quality management  24,921자
+  [시드·en] Statistical process control  16,864자
+  [시드·en] Lean manufacturing  15,910자
+  [시드·en] Total productive maintenance  7,613자
+  [시드·en] Overall equipment effectiveness  29,085자
+  [시드·en] Robotic process automation  14,007자
+  [시드·en] Supply chain management  59,507자
+  [시드·en] Demand forecasting  23,253자
+  [시드·en] Warehouse management system  9,106자
+  [시드·en] Fleet management  10,089자
+  [시드·en] Telematics  15,326자
+  [시드·en] Precision agriculture  22,650자
+  [시드·en] Diffusion of innovations  41,160자
+  [시드·en] Technology acceptance model  11,822자
+  [시드·en] Change management  39,550자
+■ 1홉 (시드 여러 개가 함께 가리키는 순 — 두 언어 후보를 한 줄로 세운다)
+  [1홉·6·en] Emerging technologies  19,653자
+  [1홉·5·en] 3D printing  59,695자
+  [1홉·5·en] Business process  20,629자
+  [1홉·5·en] Innovation  42,951자
+  [1홉·5·en] Logistics  37,865자
+  [1홉·5·en] Manufacturing  21,222자
+
+==== 결과 ====
+문서 수            : 45  (ko 12 · en 33)
+총 글자 수         : 891,738자  (대략 297,246~445,869 토큰 · gpt-4o-mini 창 128,000)
+내부 링크 총수     : 247
+문서당 링크 중앙값 : 4
+링크 0개 문서      : 2건 ['Cobot', 'Statistical process control']
+아무도 안 가리키는 문서(탐색으로 못 닿음): 3건 ['Demand forecasting', 'Manufacturing execution system', 'Robotic process automation']
+60,000자에서 자른 문서 : 2건 Supply chain management(66,340자), 3D printing(70,675자)
+뺀 문서            : 4건
+   - [1홉·6·en] Fleet digitalization (원문 2,679바이트)
+   - [1홉·6·en] Inventory management (business) (원문 5,699바이트)
+   - [1홉·6·ko] 국제 표준 연속 간행물 번호 (원문 1,541바이트)
+   - [1홉·5·en] Management system (원문 5,376바이트)
+저장: C:\Users\lis29\projects\sme-deep-research\data\corpus.json
