@@ -100,7 +100,7 @@ def ask(system: str, user: str, 누가: str, 용도: str, cap: int | None = None
     rec = {"누가": 누가, "용도": 용도, "입력자수": len(body), "지시자수": len(system),
            "잘림": len(user) > cap, "입력토큰": usage.get("input_tokens", 0),
            "출력토큰": usage.get("output_tokens", 0), "초": round(time.time() - t0, 2)}
-    if 용도 in ("기획", "고르기"):
+    if 용도.startswith("기획") or 용도 == "고르기":
         rec["답"] = res.content[:300]            # 나중에 '왜 그렇게 골랐나'를 의심할 수 있게
     return res.content, rec
 
@@ -151,9 +151,21 @@ def 역할문장(t: dict) -> str:
 # ── ① 기획 ────────────────────────────────────────────────────────────────────
 
 def cards() -> str:
-    """코디네이터가 보는 것은 문서 전체가 아니라 제목 + 앞부분 카드뿐이다."""
-    n = CFG["카드_글자수"]
-    return "\n".join(f"- {t}: {re.sub(r'\s+', ' ', v[:n])}" for t, v in DOCS.items())
+    """코디네이터가 보는 것은 문서 전체가 아니라 카드뿐이다 — 제목 + 앞부분 + 문서의 절 제목 몇 개.
+
+    앞부분만으로는 '디지털 트윈'이 설비 정비와, '텔레매틱스'가 차량 관리와 이어진다는 것이 안 보였다
+    (둘 다 절 제목에 'Maintenance and service', 'Fleet management' 가 있다). 절 제목은 문서 한 건에
+    평균 180자 남짓이라 코디네이터가 보는 양은 조금만 늘어난다."""
+    n, k = CFG["카드_글자수"], CFG["카드_절제목수"]
+    out = []
+    for t, v in DOCS.items():
+        heads = re.findall(r"^==+\s*(.+?)\s*==+\s*$", v, re.M)[:k]
+        body = re.sub(r"^==+.*?==+\s*$", " ", v, flags=re.M)      # 앞부분에 절 제목 줄이 섞이지 않게
+        line = f"- {t}: {re.sub(r'\s+', ' ', body[:n]).strip()}"
+        if heads:
+            line += f" [목차] {' · '.join(heads)}"
+        out.append(line)
+    return "\n".join(out)
 
 
 def _제목맞추기(seed: str) -> str | None:
@@ -164,39 +176,92 @@ def _제목맞추기(seed: str) -> str | None:
     return next((t for t in DOCS if t.casefold() == key), None)
 
 
+def 카드(t: str) -> str:
+    return next(l for l in cards().splitlines() if l.startswith(f"- {t}: "))
+
+
+def 대상뽑기(question: str, 최대: int = 8) -> tuple[list, dict, list]:
+    """기획 1단계 — 질문이 묻는 대상(방법·수단·기술·장벽 유형·이론)을 빠짐없이 늘어놓고, 대상마다 그것을
+    가장 직접 다루는 카드 1~2건을 붙인다. 목차를 한 번에 짜게 하면 떠오르지 않는 대상을 흘리고
+    측면(조건·전제) 절로 빈자리를 메웠다. (대상 목록, 호출 기록, 교정)."""
+    raw, rec = ask(
+        "너는 리서치 팀의 코디네이터다. 목차를 짜기 전에, 질문에 답하려면 다뤄야 할 **대상**을 모두 늘어놓는다.\n"
+        "- 대상은 질문이 묻는 방법·수단·기술·장벽 유형·이론처럼 문서 카드 한두 건이 다루는 것이다. "
+        "'조건·전제·장단점·효과·개요' 같은 측면은 대상이 아니다.\n"
+        "- 질문에 이름이 나온 것은 반드시 넣는다. 질문이 '방법들·수단들'처럼 여럿을 물으면 카드 앞부분과 "
+        "[목차] 에 적힌 절 제목을 보고, 질문이 묻는 쓰임새를 다루는 문서를 빠짐없이 찾는다. "
+        "질문이 특정 집단·조직의 사정을 묻으면 그 집단·조직 자체를 다루는 카드도 대상으로 넣는다.\n"
+        f"- 대상은 최대 {최대}개, 질문과 직접 관련이 큰 순서로 적는다.\n"
+        "- 대상마다 '필수'를 정한다: 그 대상을 빼면 질문의 한 부분에 답할 수 없으면 true. 질문이 문서 한 건으로 "
+        "답이 나오면 필수는 그 하나뿐이다.\n"
+        "- 카드 제목은 카드에 적힌 그대로(영어 제목은 영어 그대로) 한 글자도 바꾸지 않는다.\n"
+        'JSON으로만: {"대상":[{"이름":"한국어 대상 이름","카드":["카드 제목"],"이유":"질문의 어느 부분에 답하나 한 구절","필수":true}]}',
+        f"[질문] {question}\n[읽을 수 있는 문서 카드]\n{cards()}", 누가="코디네이터", 용도="기획-대상")
+    cands, 교정 = [], []
+    for x in (jload(raw, {}).get("대상") or [])[:최대]:
+        if not isinstance(x, dict):
+            continue
+        ok = [c for c in (_제목맞추기(str(t)) for t in (x.get("카드") or [])) if c]
+        bad = [str(t) for t in (x.get("카드") or []) if not _제목맞추기(str(t))]
+        if bad:
+            교정.append({"절": str(x.get("이름")), "원래": ", ".join(bad), "사유": "대상 카드가 목록에 없음 → 뺌"})
+        if ok:
+            cands.append({"이름": str(x.get("이름") or ok[0]), "카드": list(dict.fromkeys(ok))[:2],
+                          "이유": str(x.get("이유") or ""), "필수": x.get("필수") is True})
+    return cands, rec, 교정
+
+
+def 절고르기(cands: list, 절수: int) -> list:
+    """어느 대상을 절로 삼을지는 코드가 정한다 — 필수 대상을 관련 순서대로, 최대 절수까지.
+    필수가 하나도 없으면 첫 대상 하나. 첫 카드가 같은 대상(같은 문서로 시작하는 두 절)은 뒤의 것을 뺀다."""
+    고른, 첫카드 = [], set()
+    for c in [c for c in cands if c["필수"]] or cands[:1]:
+        if c["카드"][0] in 첫카드:
+            continue
+        첫카드.add(c["카드"][0])
+        고른.append(c)
+        if len(고른) >= 절수:
+            break
+    return 고른
+
+
 def plan(s: dict) -> dict:
+    """기획 — 1단계 대상 뽑기(모델) → 절 고르기(코드) → 2단계 절마다 제목·지시·역할·예산(모델).
+    절의 대상과 시작 문서는 코드가 정하므로, 모델이 필수 대상을 빼먹거나 측면 절을 만들 수 없다."""
     st = s["설정"]
     총예산 = st["절수"] * st["절예산"]
+    cands, rec1, 교정 = 대상뽑기(s["question"])
+    if not cands:
+        교정.append({"절": "-", "원래": rec1.get("답", "")[:80], "사유": "대상 뽑기 실패 → 질문 하나를 한 절로"})
+    고른 = 절고르기(cands, st["절수"]) if cands else [{"이름": "개요", "카드": [], "이유": "", "필수": True}]
     roster = "\n".join(f"- {k}: {v}" for k, v in ROSTER.items())
-    raw, rec = ask(
-        "너는 리서치 팀의 코디네이터다. 질문에 답하는 보고서의 목차를 짜고 절마다 조사관 한 명을 맡긴다.\n"
-        f"- 절은 1개 이상 {st['절수']}개 이하. 질문이 문서 한두 건으로 답이 나오면 절을 적게 둔다.\n"
-        "- 목차는 **대상 단위**로 나눈다 — 질문이 실제로 묻는 기술·방법·수단·장벽 유형처럼, 문서 카드가 "
-        "나뉜 단위와 맞춘다. '개요·정의·장단점·사례·도입방법' 같은 형식 단위나 '기술 측면·조직 측면·"
-        "비용 측면' 같은 측면 단위로 나누지 마라. 그렇게 나누면 조사관 전원이 같은 문서를 읽는다.\n"
-        "- 절마다 가장 먼저 읽을 시작 문서를 카드 목록에서 하나 고른다. 제목은 카드에 적힌 그대로 "
-        "(영어 제목은 영어 그대로) 한 글자도 바꾸지 말고, 절끼리 서로 다른 문서를 준다.\n"
+    절글 = "\n".join(f"{i}. {c['이름']} — {c['이유']}\n" + "\n".join(f"   {카드(t)}" for t in c["카드"])
+                    for i, c in enumerate(고른))
+    raw, rec2 = ask(
+        "너는 리서치 팀의 코디네이터다. 보고서의 절은 아래처럼 정해져 있다. 절마다 제목·지시·조사관·예산을 정한다.\n"
+        "- 절 제목은 그 대상의 이름으로 한다. 질문이 묻는 측면(데이터·조건·전제·효과 등)은 지시 안에 넣는다.\n"
         f"- 절마다 읽을 문서 수(예산)를 1~{st['절예산_최대']} 사이로 정한다. 모든 절의 합은 {총예산} 이하. "
         "근거가 여러 문서에 흩어진 절에 더 준다.\n"
         f"- 절의 성격에 맞는 조사관을 명단에서 고른다.\n[조사관 명단]\n{roster}\n"
         "- 보고서 제목·절 제목·지시는 한국어로 쓴다.\n"
-        'JSON으로만: {"제목":"보고서 제목","목차":[{"절":"절 제목","지시":"이 절에서 밝혀야 할 것 한두 문장",'
-        '"역할":"명단의 이름 그대로","시작문서":"카드의 제목 그대로","예산":3}]}',
-        f"[질문] {s['question']}\n[읽을 수 있는 문서 카드]\n{cards()}", 누가="코디네이터", 용도="기획")
+        'JSON으로만: {"제목":"보고서 제목","목차":[{"번호":0,"절":"절 제목","지시":"이 절에서 밝혀야 할 것 한두 문장",'
+        '"역할":"명단의 이름 그대로","예산":3}]}',
+        f"[질문] {s['question']}\n[정해진 절]\n{절글}", 누가="코디네이터", 용도="기획-목차")
     obj = jload(raw, {})
+    답 = {}
+    for item in (obj.get("목차") or []):
+        try:
+            답.setdefault(int(item.get("번호")), item)
+        except (TypeError, ValueError):
+            pass
 
-    toc, taken, 교정 = [], set(), []
-    for item in (obj.get("목차") or [])[:st["절수"]]:
-        절 = str(item.get("절") or "무제")
-        원래 = str(item.get("시작문서") or "")
-        seed = _제목맞추기(원래) if 원래 else None
-        if not st["배정"]:                        # 스위치: 시작 문서를 주지 않는다
-            seed = None
-        elif 원래 and seed is None:
-            교정.append({"절": 절, "원래": 원래, "사유": "목록에 없는 제목 → 자율"})
-        elif seed in taken:
-            교정.append({"절": 절, "원래": 원래, "사유": "다른 절과 중복 → 자율"})
-            seed = None
+    toc, taken = [], set()
+    for i, c in enumerate(고른):
+        item = 답.get(i, {})
+        if not item:
+            교정.append({"절": c["이름"], "원래": "", "사유": "2단계 답에 이 절이 없음 → 기본값"})
+        절 = str(item.get("절") or c["이름"])
+        seed = next((t for t in c["카드"] if t not in taken), None) if st["배정"] else None   # 스위치: 배정
         if seed:
             taken.add(seed)
         role = str(item.get("역할") or "")
@@ -209,20 +274,19 @@ def plan(s: dict) -> dict:
             budget = int(item.get("예산") or st["절예산"])
         except (TypeError, ValueError):
             budget = st["절예산"]
-        toc.append({"절": 절, "지시": str(item.get("지시") or s["question"]), "역할": role,
+        toc.append({"절": 절, "대상": c["이름"], "지시": str(item.get("지시") or s["question"]), "역할": role,
                     "시작문서": seed or "", "예산": max(1, min(budget, st["절예산_최대"]))})
-    if not toc:
-        교정.append({"절": "개요", "원래": raw[:80], "사유": "목차를 못 읽음 → 한 절짜리 기본 목차"})
-        toc = [{"절": "개요", "지시": s["question"], "역할": CFG["기본_역할"], "시작문서": "", "예산": st["절예산"]}]
 
     while sum(t["예산"] for t in toc) > 총예산:    # 합계 상한 — 가장 큰 절부터 하나씩 깎는다
         max(toc, key=lambda t: t["예산"])["예산"] -= 1
 
-    p = {"제목": str(obj.get("제목") or s["question"]), "목차": toc,
+    p = {"제목": str(obj.get("제목") or s["question"]), "목차": toc, "대상후보": cands,
          "배치": list(range(len(toc))), "바퀴": 1, "교정": 교정}
     seeds = " · ".join(f"{t['역할']}→«{t['시작문서'] or '자율'}»×{t['예산']}" for t in toc)
     note = f" · 교정 {len(교정)}건" if 교정 else ""
-    return {"plan": p, "calls": [rec], "log": [f"① 기획   목차 {len(toc)}절 · {seeds}{note}"]}
+    필수 = sum(1 for c in cands if c["필수"])
+    return {"plan": p, "calls": [rec1, rec2],
+            "log": [f"① 기획   대상 후보 {len(cands)}개(필수 {필수}) → 목차 {len(toc)}절 · {seeds}{note}"]}
 
 
 # ── ② 배치 ────────────────────────────────────────────────────────────────────
