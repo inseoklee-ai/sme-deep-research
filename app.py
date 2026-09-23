@@ -4,8 +4,12 @@
 
 API 키 — 보는 사람이 자기 OpenAI 키를 왼쪽에 넣고 돌린다. 키는 그 사람의 세션 메모리에만 있고
 (graph.키쓰기 → contextvar), 파일·실행 기록·로그 어디에도 남지 않으며, 다른 방문자의 실행과 섞이지 않는다.
-이 PC 에 keys.env / .env 가 있으면 '이 PC 의 키'도 고를 수 있다 — 공개 배포에서 이 선택지를 숨기려면
-환경 변수 DEMO_HIDE_LOCAL_KEY=1. '지난 실행 보기' 는 키 없이 된다.
+이 PC 에 keys.env / .env 가 있으면 '이 PC 의 키'도 고를 수 있다. '지난 실행 보기' 는 키 없이 된다.
+
+공개 모드 (DEMO_PUBLIC=1 — Streamlit Cloud 에서는 Secrets 에 DEMO_PUBLIC = "1")
+  - 주인 키 선택지를 숨긴다 (방문자는 자기 키만)
+  - 방문자의 실행을 서버에 저장하지 않는다 (다음 방문자에게 남의 질문·보고서가 보이지 않게)
+  - '지난 실행 보기' 에는 저장소에 들어 있는 실험 기록만 보인다
 """
 from __future__ import annotations
 
@@ -40,12 +44,13 @@ st.set_page_config(page_title="중소기업 AI 딥리서처", page_icon="🔎", 
 
 내키 = "내 OpenAI API 키 입력"
 PC키 = "이 PC 의 keys.env 키"
+공개 = os.getenv("DEMO_PUBLIC") == "1" or os.getenv("DEMO_HIDE_LOCAL_KEY") == "1"
 
 
 def 키고르기() -> str | None:
     """왼쪽 패널의 키 칸. 실행에 쓸 키를 돌려준다(없으면 None). 키 자체는 화면에 다시 보이지 않는다."""
     선택지 = [내키]
-    if G.파일키() and os.getenv("DEMO_HIDE_LOCAL_KEY") != "1":
+    if G.파일키() and not 공개:
         선택지.append(PC키)
     방식 = st.radio("API 키", 선택지, help="보는 사람이 자기 키로 돌린다. 비용은 그 키의 계정에 청구된다.")
     if 방식 == PC키:
@@ -128,13 +133,13 @@ def 기획보기(rec: dict):
     if p.get("대상후보"):
         st.markdown("**1단계 — 코디네이터가 뽑은 대상** (★ 필수 → 코드가 이것만 절로 삼는다)")
         st.dataframe([{"필수": "★" if c["필수"] else "", "대상": c["이름"], "카드": ", ".join(c["카드"]),
-                       "이유": c["이유"]} for c in p["대상후보"]], hide_index=True, use_container_width=True)
+                       "이유": c["이유"]} for c in p["대상후보"]], hide_index=True, width="stretch")
     st.markdown("**2단계 — 목차와 배정**")
     st.dataframe([{"절": t["절"], "역할": t["역할"], "시작 문서": t["시작문서"] or "자율", "예산": t["예산"],
-                   "지시": t["지시"]} for t in p.get("목차", [])], hide_index=True, use_container_width=True)
+                   "지시": t["지시"]} for t in p.get("목차", [])], hide_index=True, width="stretch")
     if p.get("교정"):
         st.markdown("**코드가 바로잡은 것** — 모델이 지어낸 제목·겹친 배정·명단에 없는 역할")
-        st.dataframe(p["교정"], hide_index=True, use_container_width=True)
+        st.dataframe(p["교정"], hide_index=True, width="stretch")
     st.caption(f"종료 사유: {p.get('종료', '-')}")
 
 
@@ -150,7 +155,7 @@ def 격리보기(rec: dict):
     st.markdown("**LLM 호출 전체**")
     st.dataframe([{"누가": c["누가"], "용도": c["용도"], "입력 글자": c["입력자수"], "입력 토큰": c.get("입력토큰", 0),
                    "출력 토큰": c.get("출력토큰", 0), "초": c.get("초", 0), "대체": "⚠" if c.get("대체") else "",
-                   "답(앞부분)": (c.get("답") or "")[:80]} for c in calls], hide_index=True, use_container_width=True)
+                   "답(앞부분)": (c.get("답") or "")[:80]} for c in calls], hide_index=True, width="stretch")
 
 
 def 인용보기(rec: dict, 최대: int = 40):
@@ -169,7 +174,7 @@ def 인용보기(rec: dict, 최대: int = 40):
                          "원문 대목": 원문대목(c, 문, 220) if c in G.DOCS else "⚠ 코퍼스에 없는 제목"})
             if len(rows) >= 최대:
                 break
-    st.dataframe(rows, hide_index=True, use_container_width=True, height=520)
+    st.dataframe(rows, hide_index=True, width="stretch", height=520)
 
 
 def 한편보기(rec: dict, 짝: dict | None = None):
@@ -213,7 +218,7 @@ def 한편보기(rec: dict, 짝: dict | None = None):
 def 지난실행() -> list[dict]:
     out = []
     for name, path in (("실험 1", G.OUT / "ablation_runs.jsonl"), ("실험 2", G.OUT / "ablation2_runs.jsonl"),
-                       ("직접 실행", G.OUT / "runs.jsonl")):
+                       *([] if 공개 else [("직접 실행", G.OUT / "runs.jsonl")])):
         if path.exists():
             for r in M.불러오기(path):
                 e = r.get("실험") or {}
@@ -228,6 +233,9 @@ def 지난실행() -> list[dict]:
 st.title("🔎 중소기업 AI·디지털 전환 딥리서처")
 st.caption("코디네이터가 목차를 짜서 조사관들에게 절을 나눠 맡기고, 조사관들은 동시에 각자 문서를 골라 읽고 자기 절을 쓴다. "
            f"코퍼스: 위키백과 {len(G.DOCS)}건(한국어·영어) · {sum(len(v) for v in G.DOCS.values()):,}자 — 모델 창(12.8만 토큰)을 넘는다.")
+if 공개:
+    st.caption("🔒 공개 데모 — 자신의 OpenAI 키로 돌립니다. 넣은 키와 질문·결과는 서버에 저장되지 않고 다른 방문자에게 보이지 않습니다. "
+               "[코드와 보고서](https://github.com/inseoklee-ai/sme-deep-research)")
 
 with st.sidebar:
     모드 = st.radio("모드", ["새로 질문하기", "지난 실행 보기 (키 불필요)"])
@@ -265,7 +273,7 @@ if 모드 == "새로 질문하기":
         try:
             with st.status("팀이 조사 중 — 기획 → 배치 → 조사관 동시 파견 → 점검 → 종합", expanded=True) as box:
                 rec = G.run(질문.strip(), 덮어쓸, qid=None if 골라 == "(직접 쓰기)" else 골라, 라벨="데모",
-                            save=True, verbose=False, on_log=lambda line: box.write(f"`{line}`"))
+                            save=not 공개, verbose=False, on_log=lambda line: box.write(f"`{line}`"))
                 box.update(label=f"끝 — {rec['초']}초 · LLM {len(rec['calls'])}회", state="complete", expanded=False)
             짝 = None
             if 비교:
