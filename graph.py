@@ -635,12 +635,21 @@ def 격리(calls: list) -> dict:
 
 
 def run(question: str, 덮어쓸: dict | None = None, qid: str | None = None, 라벨: str = "기본",
-        save: bool = True, verbose: bool = True) -> dict:
+        save: bool = True, verbose: bool = True, on_log=None) -> dict:
+    """on_log 를 주면 노드가 끝날 때마다 새 로그 줄을 넘겨준다(웹 데모의 실시간 진행 표시)."""
     st = 설정만들기(덮어쓸)
     t0 = time.time()
-    final = build().invoke({"question": question, "설정": st, "plan": {}, "sections": [], "visited": [],
-                            "calls": [], "report": "", "log": [], "task": {}, "prior": {}},
-                           {"recursion_limit": 50})
+    init = {"question": question, "설정": st, "plan": {}, "sections": [], "visited": [],
+            "calls": [], "report": "", "log": [], "task": {}, "prior": {}}
+    if on_log is None:
+        final = build().invoke(init, {"recursion_limit": 50})
+    else:
+        final, 본것 = init, 0
+        for state in build().stream(init, {"recursion_limit": 50}, stream_mode="values"):
+            final = state
+            for line in state["log"][본것:]:
+                on_log(line)
+            본것 = len(state["log"])
     adopted, 판정 = 채택원고(final["sections"], st["원고_정책"])
     rec = {"run_id": datetime.now().strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:4],
            "시각": datetime.now().isoformat(timespec="seconds"), "qid": qid, "질문": question, "라벨": 라벨,

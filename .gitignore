@@ -17,3 +17,7 @@ cache/
 .idea/
 Thumbs.db
 .DS_Store
+
+# 에디터 도구 설정
+.claude/
+output/dev/streamlit.log
