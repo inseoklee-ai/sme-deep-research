@@ -352,7 +352,10 @@ def 고르기(누구: str, 맥락: str, read: list, cand: list, 누가: str = "�
                        f"{맥락}\n[이미 읽음] {', '.join(read) or '없음'}\n[후보] {', '.join(cand[:60])}{주의}",
                        누가=누가, 용도="고르기")
         recs.append(rec)
-        pick = _제목맞추기(str(jload(raw, {}).get("문서") or ""))
+        got = str(jload(raw, {}).get("문서") or "")
+        pick = _제목맞추기(got)
+        if pick not in cand:                      # "A, B" 처럼 여러 제목을 한 칸에 적으면 후보에 있는 첫 제목으로
+            pick = next((p for p in (_제목맞추기(x) for x in re.split(r"\s*[,/|·]\s*", got)) if p in cand), pick)
         if pick and pick in cand:
             return pick, recs
         주의 = f"\n[주의] 방금 고른 «{pick or raw[:40]}» 는 이미 읽었거나 후보에 없다. 후보 목록에서 다시 골라라."
@@ -585,6 +588,8 @@ def run(question: str, 덮어쓸: dict | None = None, qid: str | None = None, �
            "sections": final["sections"], "채택": {str(k): v["바퀴"] for k, v in adopted.items()},
            "원고판정": 판정, "visited": final["visited"], "calls": final["calls"],
            "격리": 격리(final["calls"]), "report": final["report"], "log": final["log"]}
+    from metrics import 재기                      # 지표는 metrics.py 한 곳에서만 계산한다
+    rec["metrics"] = 재기(rec)
     if verbose:
         for line in final["log"]:
             print(line)
@@ -592,6 +597,9 @@ def run(question: str, 덮어쓸: dict | None = None, qid: str | None = None, �
         print(f"   · 격리: 코디네이터·편집자 {g['코디네이터가_본_글자']:,}자 / 조사관 {g['조사관이_본_글자']:,}자 "
               f"→ 격리율 {g['격리율']}% · LLM {g['LLM호출']}회 · 토큰 {g['입력토큰']:,}+{g['출력토큰']:,} · {rec['초']}초\n"
               f"   · 고르기 대체 {g['고르기_대체']}회 · 집필 구조 실패 {g['집필_구조실패']}회 · 인용 형식 교정 {g['인용형식교정']}곳")
+        m = rec["metrics"]
+        print("⑥ 측정   " + " · ".join(f"{k} {v}%" for k, v in m["신호"].items() if v is not None)
+              + " · 경보 " + (", ".join(f"{k} {v}" for k, v in m["경보"].items() if v) or "없음"))
     if save:
         (OUT / "reports").mkdir(parents=True, exist_ok=True)
         with open(OUT / "runs.jsonl", "a", encoding="utf-8") as f:
