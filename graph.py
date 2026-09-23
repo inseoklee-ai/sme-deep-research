@@ -82,20 +82,27 @@ def llm():
 일시적오류 = ("RateLimit", "APIConnection", "Timeout", "InternalServer")
 
 
+class 잔액소진(RuntimeError):
+    """키의 잔액이 떨어졌다 — 기다려도 안 풀린다. 실험은 여기서 멈추고, 키를 바꾼 뒤 다시 실행하면 이어서 돈다."""
+
+
 def ask(system: str, user: str, 누가: str, 용도: str, cap: int | None = None) -> tuple[str, dict]:
     """LLM 한 번 부르고 (답, 호출 기록) 을 돌려준다. 입력은 cap 자에서 자른다(창을 넘지 않게)."""
     cap = cap or CFG["읽기_입력상한"]
     body = user[:cap]
     msgs = [{"role": "system", "content": system}, {"role": "user", "content": body}]
     t0 = time.time()
-    for 시도 in range(4):
+    for 시도 in range(7):
         try:
             res = llm().invoke(msgs)
             break
-        except Exception as e:                    # 잠깐 막힌 것만 다시 — 설정 오류는 바로 드러낸다
-            if 시도 == 3 or not any(k in type(e).__name__ for k in 일시적오류):
-                raise
-            time.sleep(2 ** 시도)
+        except Exception as e:
+            # 속도 제한과 잔액 소진은 둘 다 429 RateLimitError 로 온다 — 잔액 소진은 기다려도 안 풀리니 바로 멈춘다
+            if "insufficient_quota" in str(e):
+                raise 잔액소진(f"OpenAI 키 잔액이 소진됐습니다 — 키를 바꾸고 같은 명령을 다시 실행하면 이어서 돕니다. ({e})") from e
+            if 시도 == 6 or not any(k in type(e).__name__ for k in 일시적오류):
+                raise                             # 설정 오류(키 없음·모델명 등)는 기다려도 안 풀린다 — 바로 드러낸다
+            time.sleep(min(2 ** 시도, 30))        # 잠깐 막힌 것만 다시: 1·2·4·8·16·30초
     usage = getattr(res, "usage_metadata", None) or {}
     rec = {"누가": 누가, "용도": 용도, "입력자수": len(body), "지시자수": len(system),
            "잘림": len(user) > cap, "입력토큰": usage.get("input_tokens", 0),
@@ -342,24 +349,46 @@ def 다음문서(t: dict, read: list, 피하기: list) -> tuple[str | None, dict
     return 고르기(역할문장(t) + " 맡은 절을 쓰기 위해", f"[맡은 절] {t['절']}\n[지시] {t['지시']}", read, cand)
 
 
-def 고르기(누구: str, 맥락: str, read: list, cand: list, 누가: str = "조사관") -> tuple[str, list]:
-    """후보 중 하나를 모델이 고른다. 이미 읽었거나 후보에 없는 제목이면 한 번 더 묻고,
-    그래도 안 되면 후보 첫 번째로 바꾼다(대체 — 건수를 센다). 대조군도 이 함수를 쓴다."""
-    recs, 주의 = [], ""
-    for _ in range(2):
-        raw, rec = ask(f"{누구} 다음에 읽을 문서를 후보 중에서 정확히 하나 고른다.\n"
-                       'JSON으로만: {"문서":"후보에 있는 제목 그대로"}',
-                       f"{맥락}\n[이미 읽음] {', '.join(read) or '없음'}\n[후보] {', '.join(cand[:60])}{주의}",
-                       누가=누가, 용도="고르기")
-        recs.append(rec)
-        got = str(jload(raw, {}).get("문서") or "")
-        pick = _제목맞추기(got)
-        if pick not in cand:                      # "A, B" 처럼 여러 제목을 한 칸에 적으면 후보에 있는 첫 제목으로
-            pick = next((p for p in (_제목맞추기(x) for x in re.split(r"\s*[,/|·]\s*", got)) if p in cand), pick)
-        if pick and pick in cand:
-            return pick, recs
-        주의 = f"\n[주의] 방금 고른 «{pick or raw[:40]}» 는 이미 읽었거나 후보에 없다. 후보 목록에서 다시 골라라."
-    recs[-1]["대체"] = True                       # 두 번 다 못 써서 후보 첫 번째로
+def 고르기(누구: str, 맥락: str, read: list, cand: list, 누가: str = "조사관",
+          찾을것: bool = False) -> tuple[str, list]:
+    """후보 중 하나를 모델이 고른다. 이미 읽었거나 후보에 없는 제목이면 번호 목록으로 한 번 더 묻고,
+    그래도 안 되면 후보 첫 번째로 바꾼다(대체 — 경보로 센다). 대조군도 이 함수를 쓴다.
+    찾을것=True 면 같은 호출에서 '이 문서에서 찾을 것' 한 문장도 받아 recs[-1]["찾을것"] 에 둔다
+    (대조군 (나) — 혼자서도 문서마다 읽기 지시를 좁힐 수 있게. 추가 호출 없음)."""
+    덧 = ',"찾을것":"이 문서에서 찾을 내용 한 문장"' if 찾을것 else ""
+    recs = []
+    # 1차 — 제목으로 고른다
+    raw, rec = ask(f"{누구} 다음에 읽을 문서를 후보 중에서 정확히 하나 고른다.\n"
+                   'JSON으로만: {"문서":"후보에 있는 제목 그대로"' + 덧 + '}',
+                   f"{맥락}\n[이미 읽음] {', '.join(read) or '없음'}\n[후보] {', '.join(cand[:60])}",
+                   누가=누가, 용도="고르기")
+    recs.append(rec)
+    obj = jload(raw, {})
+    got = str(obj.get("문서") or "")
+    pick = _제목맞추기(got)
+    if pick not in cand:                          # "A, B" 처럼 여러 제목을 한 칸에 적으면 후보에 있는 첫 제목으로
+        pick = next((p for p in (_제목맞추기(x) for x in re.split(r"\s*[,/|·]\s*", got)) if p in cand), pick)
+    if pick and pick in cand:
+        if 찾을것:
+            rec["찾을것"] = str(obj.get("찾을것") or "")
+        return pick, recs
+    # 2차 — 번호로 고른다. 모델이 [이미 읽음] 목록의 제목을 베껴 오는 일이 잦아서, 후보만 번호로 보여 준다
+    번호판 = "\n".join(f"{k}. {t}" for k, t in enumerate(cand[:60]))
+    raw, rec = ask(f"{누구} 다음에 읽을 문서를 아래 번호 목록에서 정확히 하나 고른다. 방금 고른 «{pick or got[:40]}» 는 "
+                   "이미 읽었거나 후보가 아니다.\n"
+                   'JSON으로만: {"번호":0' + 덧 + '}',
+                   f"{맥락}\n[후보]\n{번호판}", 누가=누가, 용도="고르기")
+    recs.append(rec)
+    obj = jload(raw, {})
+    if 찾을것:
+        rec["찾을것"] = str(obj.get("찾을것") or "")
+    try:
+        k = int(obj.get("번호"))
+        if 0 <= k < len(cand[:60]):
+            return cand[k], recs
+    except (TypeError, ValueError):
+        pass
+    recs[-1]["대체"] = True                       # 두 번 다 못 써서 후보 첫 번째로 — 경보로 센다
     return cand[0], recs
 
 
@@ -410,6 +439,19 @@ def 문장조립(문장: list) -> tuple[str, int]:
     return " ".join(out), 빈근거
 
 
+def 문장건지기(raw: str) -> list[dict]:
+    """JSON 이 조금 깨져서 통째로 못 읽을 때, {"글": "...", "근거": [...]} 조각을 하나씩 건진다.
+    팀 집필과 대조군 집필이 같이 쓴다 — 한쪽만 건져 주면 비교가 기운다."""
+    out = []
+    for 글, 근거 in re.findall(r'\{\s*"글"\s*:\s*"((?:[^"\\]|\\.)*)"\s*,\s*"근거"\s*:\s*\[([^\]]*)\]', raw):
+        try:
+            글 = json.loads(f'"{글}"')
+        except ValueError:
+            pass
+        out.append({"글": 글, "근거": re.findall(r'"((?:[^"\\]|\\.)*)"', 근거)})
+    return out
+
+
 def 집필(t: dict, notes: list) -> tuple[dict, dict]:
     """모은 메모만 근거로 절 원고를 쓰고 충분/부족을 스스로 신고한다(같은 호출 — 추가 비용 0).
     문장별 구조로 받아 코드가 인용 표기를 붙인다 — 자유 서술에 «» 를 맡기면 gpt-4o-mini 가 자주 빠뜨린다."""
@@ -422,9 +464,15 @@ def 집필(t: dict, notes: list) -> tuple[dict, dict]:
                    + 집필_형식,
                    f"[맡은 절] {t['절']}\n[지시] {t['지시']}\n[모은 자료]\n{자료}", 누가="조사관", 용도="집필")
     obj = jload(raw, {})
-    text, 빈근거 = 문장조립(obj.get("문장") or [])
+    rec["답"] = raw[:6000]                        # 구조가 깨졌을 때 나중에 다시 건질 수 있게 원답을 남긴다
+    문장 = obj.get("문장") or []
+    if not 문장:
+        문장 = 문장건지기(raw)
+        if 문장:
+            rec["구조실패"] = True                # 건졌어도 형식 실패는 경보로 센다
+    text, 빈근거 = 문장조립(문장)
     교정수 = 0
-    if len(text) < 100:                          # 구조를 못 지켰으면 원문에서라도 건지고 [제목] 을 «제목» 으로
+    if len(text) < 100:                          # 그래도 못 건졌으면 원문에서라도 건지고 [제목] 을 «제목» 으로
         text = re.sub(r'^\s*\{.*?"(본문|글)"\s*:\s*"?', "", raw, flags=re.S)[:2500].strip()
         text, 교정수 = 인용형식교정(text)
         rec["구조실패"] = True
