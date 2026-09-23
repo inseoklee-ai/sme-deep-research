@@ -18,8 +18,10 @@
 from __future__ import annotations
 
 import argparse
+import contextvars
 import json
 import operator
+import threading
 import os
 import re
 import sys
@@ -59,24 +61,57 @@ class Research(TypedDict):
     prior:    dict                                # 재위임일 때 지난 바퀴의 원고
 
 
-_llm = None
+_llms: dict[str, object] = {}
+_llm_lock = threading.Lock()
+# 웹 데모에서 방문자마다 자기 키를 쓰게 한다 — 키를 os.environ 에 넣으면 프로세스 전체가 공유해서
+# 한 방문자의 키로 다른 방문자의 실행이 돈다. contextvar 는 LangGraph 가 병렬 노드 스레드로 넘겨준다.
+_세션키: contextvars.ContextVar[str | None] = contextvars.ContextVar("세션키", default=None)
+
+
+def 키쓰기(key: str | None):
+    """이 실행(현재 스레드·컨텍스트)에서 쓸 OpenAI 키를 정한다. 파일·기록·로그 어디에도 남기지 않는다."""
+    return _세션키.set(key.strip() if key else None)
+
+
+def 파일키() -> str | None:
+    """이 PC 의 keys.env / .env 에 있는 키 — 명령줄 실행과, 데모에서 '이 PC 의 키'를 고른 경우에만 쓴다."""
+    try:
+        from dotenv import dotenv_values
+        for path in (KEYS_ENV, ROOT / ".env"):
+            if Path(path).exists() and (v := dotenv_values(path).get("OPENAI_API_KEY")):
+                return v.strip()
+    except ImportError:
+        pass
+    return os.getenv("OPENAI_API_KEY")
 
 
 def llm():
-    """키가 필요한 순간에만 만든다 — 지표만 다시 잴 때는 키 없이 import 되게."""
-    global _llm
-    if _llm is None:
-        try:
-            from dotenv import load_dotenv
-            load_dotenv(KEYS_ENV)
-            load_dotenv(ROOT / ".env")
-        except ImportError:
-            pass
-        if not os.getenv("OPENAI_API_KEY"):
-            raise RuntimeError(f"OPENAI_API_KEY 가 없습니다 — {KEYS_ENV} 또는 .env 에 넣어 주세요.")
-        from langchain_openai import ChatOpenAI
-        _llm = ChatOpenAI(model=CFG["모델"], temperature=0, timeout=90, max_retries=0)
-    return _llm
+    """키가 필요한 순간에만 만든다 — 지표만 다시 잴 때는 키 없이 import 되게. 키마다 클라이언트 하나."""
+    key = _세션키.get() or 파일키()
+    if not key:
+        raise RuntimeError(f"OPENAI_API_KEY 가 없습니다 — {KEYS_ENV} 또는 .env 에 넣거나 데모 화면에 입력해 주세요.")
+    with _llm_lock:
+        if key not in _llms:
+            from langchain_openai import ChatOpenAI
+            _llms[key] = ChatOpenAI(model=CFG["모델"], temperature=0, timeout=90, max_retries=0, api_key=key)
+        return _llms[key]
+
+
+def 키확인(key: str) -> tuple[bool, str]:
+    """키가 살아 있는지 모델 목록 조회로 확인한다(토큰을 쓰지 않는다). (성공 여부, 한 줄 설명)."""
+    if not key or not key.strip().startswith("sk-"):
+        return False, "OpenAI 키는 sk- 로 시작합니다."
+    try:
+        from openai import OpenAI
+        OpenAI(api_key=key.strip(), timeout=20).models.retrieve(CFG["모델"])
+        return True, f"키 확인 — {CFG['모델']} 을 쓸 수 있습니다."
+    except Exception as e:                        # 실패 이유를 화면까지 올린다 (키 문자열은 넣지 않는다)
+        name = type(e).__name__
+        if "Authentication" in name:
+            return False, "키가 올바르지 않습니다(인증 실패)."
+        if "NotFound" in name or "PermissionDenied" in name:
+            return False, f"이 키로는 {CFG['모델']} 을 쓸 수 없습니다."
+        return False, f"확인하지 못했습니다: {name}"
 
 
 일시적오류 = ("RateLimit", "APIConnection", "Timeout", "InternalServer")

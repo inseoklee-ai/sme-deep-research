@@ -2,13 +2,16 @@
 
     streamlit run app.py
 
-API 키는 C:\\Users\\lis29\\projects\\keys.env (또는 .env) 의 OPENAI_API_KEY 를 쓴다. 없으면 왼쪽에 입력한다 —
-입력한 키는 이 실행 중에만 쓰이고 어디에도 저장되지 않는다. '지난 실행 보기' 는 키 없이 된다.
+API 키 — 보는 사람이 자기 OpenAI 키를 왼쪽에 넣고 돌린다. 키는 그 사람의 세션 메모리에만 있고
+(graph.키쓰기 → contextvar), 파일·실행 기록·로그 어디에도 남지 않으며, 다른 방문자의 실행과 섞이지 않는다.
+이 PC 에 keys.env / .env 가 있으면 '이 PC 의 키'도 고를 수 있다 — 공개 배포에서 이 선택지를 숨기려면
+환경 변수 DEMO_HIDE_LOCAL_KEY=1. '지난 실행 보기' 는 키 없이 된다.
 """
 from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -35,14 +38,34 @@ st.set_page_config(page_title="중소기업 AI 딥리서처", page_icon="🔎", 
 
 # ── 키 ───────────────────────────────────────────────────────────────────────
 
-def 키확인() -> bool:
-    try:
-        from dotenv import load_dotenv
-        load_dotenv(G.KEYS_ENV)
-        load_dotenv(ROOT / ".env")
-    except ImportError:
-        pass
-    return bool(os.getenv("OPENAI_API_KEY"))
+내키 = "내 OpenAI API 키 입력"
+PC키 = "이 PC 의 keys.env 키"
+
+
+def 키고르기() -> str | None:
+    """왼쪽 패널의 키 칸. 실행에 쓸 키를 돌려준다(없으면 None). 키 자체는 화면에 다시 보이지 않는다."""
+    선택지 = [내키]
+    if G.파일키() and os.getenv("DEMO_HIDE_LOCAL_KEY") != "1":
+        선택지.append(PC키)
+    방식 = st.radio("API 키", 선택지, help="보는 사람이 자기 키로 돌린다. 비용은 그 키의 계정에 청구된다.")
+    if 방식 == PC키:
+        st.caption("이 PC 의 keys.env / .env 에 있는 키를 쓴다 (주인 계정에 청구).")
+        return G.파일키()
+    key = st.text_input("OpenAI API 키", type="password", placeholder="sk-...", key="방문자키",
+                        help="이 브라우저 세션의 메모리에만 있고, 파일·기록·로그에 남지 않는다. 탭을 닫으면 사라진다.")
+    if key:
+        지문 = hash(key)
+        if st.session_state.get("키확인_지문") != 지문:   # 키가 바뀌면 확인 결과를 지운다
+            st.session_state.pop("키확인", None)
+        if st.button("키 확인", help="모델 목록만 조회한다 — 토큰을 쓰지 않는다"):
+            st.session_state["키확인"] = G.키확인(key)
+            st.session_state["키확인_지문"] = 지문
+        if "키확인" in st.session_state:
+            ok, msg = st.session_state["키확인"]
+            (st.success if ok else st.error)(msg)
+    st.caption("💡 한 번 조사에 약 1~2센트(gpt-4o-mini), 대조군 비교를 켜면 약 2배. "
+               "OpenAI 대시보드에서 사용 한도를 걸어 두기를 권한다.")
+    return key.strip() or None
 
 
 # ── 보여 주기 ────────────────────────────────────────────────────────────────
@@ -210,12 +233,8 @@ with st.sidebar:
     모드 = st.radio("모드", ["새로 질문하기", "지난 실행 보기 (키 불필요)"])
     st.divider()
     if 모드 == "새로 질문하기":
-        if 키확인():
-            st.success("API 키: keys.env / .env 에서 읽음")
-        else:
-            k = st.text_input("OpenAI API 키", type="password", help="이 실행 중에만 쓰고 저장하지 않는다")
-            if k:
-                os.environ["OPENAI_API_KEY"] = k.strip()
+        쓸키 = 키고르기()
+        st.divider()
         st.subheader("설정")
         절수 = st.slider("절 수 상한", 1, 6, G.CFG["절수"])
         절예산 = st.slider("절당 읽기 예산", 1, 5, G.CFG["절예산"])
@@ -238,11 +257,11 @@ if 모드 == "새로 질문하기":
     if 골라 != "(직접 쓰기)":
         st.caption(f"왜 나눌 만한가: {qs[골라]['왜 나눌 만한가']}")
     질문 = st.text_area("질문", value="" if 골라 == "(직접 쓰기)" else qs[골라]["질문"], height=80)
-    if st.button("조사 시작", type="primary", disabled=not 질문.strip()):
-        if not os.getenv("OPENAI_API_KEY"):
-            st.error("API 키가 없습니다 — 왼쪽에 입력해 주세요.")
-            st.stop()
+    if not 쓸키:
+        st.info("👈 왼쪽에 자신의 OpenAI API 키를 넣으면 조사를 시작할 수 있습니다. 키 없이는 '지난 실행 보기'로 실험 기록을 둘러볼 수 있습니다.")
+    if st.button("조사 시작", type="primary", disabled=not (질문.strip() and 쓸키)):
         덮어쓸 = {"절수": 절수, "절예산": 절예산, "부족_판정": 부족, **sw}
+        토큰 = G.키쓰기(쓸키)                     # 이 세션의 실행에만 이 키를 쓴다 (병렬 노드까지 전달)
         try:
             with st.status("팀이 조사 중 — 기획 → 배치 → 조사관 동시 파견 → 점검 → 종합", expanded=True) as box:
                 rec = G.run(질문.strip(), 덮어쓸, qid=None if 골라 == "(직접 쓰기)" else 골라, 라벨="데모",
@@ -254,10 +273,13 @@ if 모드 == "새로 질문하기":
                     짝 = B.혼자(질문.strip(), rec["metrics"]["참고"]["읽기횟수"], qid=rec["qid"],
                                라벨="혼자(나)" if 스스로 else "혼자(가)", 스스로지시=스스로, verbose=False)
             st.session_state["결과"] = (rec, 짝)
-        except G.잔액소진 as e:
-            st.error(str(e))
-        except Exception as e:                    # 실패는 화면까지 올린다
-            st.exception(e)
+        except G.잔액소진:
+            st.error("이 키의 잔액이 소진됐습니다 — OpenAI 대시보드에서 결제·한도를 확인하거나 다른 키를 넣어 주세요.")
+        except Exception as e:                    # 실패는 화면까지 올린다 — 다만 키로 보이는 문자열은 가린다
+            msg = re.sub(r"sk-[A-Za-z0-9_\-*]{4,}", "sk-…(가림)", str(e))
+            st.error(f"실행 실패 — {type(e).__name__}: {msg[:500]}")
+        finally:
+            G._세션키.reset(토큰)                  # 이 세션의 키를 실행이 끝나면 내려놓는다
     if "결과" in st.session_state:
         한편보기(*st.session_state["결과"])
 else:
