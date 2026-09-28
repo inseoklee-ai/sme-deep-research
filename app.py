@@ -69,6 +69,11 @@ def 키고르기() -> str | None:
     key = st.text_input("OpenAI API 키", type="password", placeholder="sk-...", key="방문자키",
                         help="이 브라우저 세션의 메모리에만 있고, 파일·기록·로그에 남지 않는다. 탭을 닫으면 사라진다.")
     if key:
+        정리, 이유 = G.키정리(key)                   # 앞뒤 공백·따옴표·보이지 않는 글자는 떼고, 한글 등이 섞이면 막는다
+        if not 정리:
+            st.error(이유)
+            return None                           # 시작 버튼을 막는다 — 그대로 보내면 UnicodeEncodeError
+        key = 정리
         지문 = hash(key)
         if st.session_state.get("키확인_지문") != 지문:   # 키가 바뀌면 확인 결과를 지운다
             st.session_state.pop("키확인", None)
@@ -80,7 +85,7 @@ def 키고르기() -> str | None:
             (st.success if ok else st.error)(msg)
     st.caption("💡 한 번 조사에 약 1~2센트(gpt-4o-mini), 대조군 비교를 켜면 약 2배. "
                "OpenAI 대시보드에서 사용 한도를 걸어 두기를 권한다.")
-    return key.strip() or None
+    return key or None
 
 
 # ── 보여 주기 ────────────────────────────────────────────────────────────────

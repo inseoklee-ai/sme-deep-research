@@ -68,9 +68,30 @@ _llm_lock = threading.Lock()
 _세션키: contextvars.ContextVar[str | None] = contextvars.ContextVar("세션키", default=None)
 
 
+_보이지않는글자 = dict.fromkeys(map(ord, "​‌‍‎‏⁠﻿"), None)
+
+
+def 키정리(key: str | None) -> tuple[str | None, str]:
+    """붙여 넣은 키를 다듬는다 — 앞뒤 공백(전각 포함)·따옴표·보이지 않는 글자를 뗀다.
+    그래도 영문·숫자·기호가 아닌 글자가 남으면 (None, 이유). 키는 HTTP 헤더('Bearer <키>')에 실리므로
+    한 글자라도 비ASCII 면 UnicodeEncodeError 가 난다 — 한/영 키가 한글이던 경우가 흔하다."""
+    if not key:
+        return None, ""
+    k = key.translate(_보이지않는글자).strip().strip("　").strip("\"'“”‘’`").strip()
+    bad = [(i, c) for i, c in enumerate(k) if not (c.isascii() and c.isprintable()) or c.isspace()]
+    if bad:
+        i, c = bad[0]
+        보기 = "한글" if "가" <= c <= "힣" or "ㄱ" <= c <= "ㆎ" else f"'{c}'"
+        return None, (f"키의 {i + 1}번째 글자가 {보기}입니다 — 영문·숫자만 있어야 합니다. "
+                      "한/영 키가 한글로 되어 있었거나, 복사할 때 따옴표·공백이 딸려 왔을 수 있습니다.")
+    if not k.startswith("sk-"):
+        return None, "OpenAI 키는 sk- 로 시작합니다."
+    return k, ""
+
+
 def 키쓰기(key: str | None):
     """이 실행(현재 스레드·컨텍스트)에서 쓸 OpenAI 키를 정한다. 파일·기록·로그 어디에도 남기지 않는다."""
-    return _세션키.set(key.strip() if key else None)
+    return _세션키.set(키정리(key)[0] if key else None)
 
 
 def 파일키() -> str | None:
@@ -99,11 +120,12 @@ def llm():
 
 def 키확인(key: str) -> tuple[bool, str]:
     """키가 살아 있는지 모델 목록 조회로 확인한다(토큰을 쓰지 않는다). (성공 여부, 한 줄 설명)."""
-    if not key or not key.strip().startswith("sk-"):
-        return False, "OpenAI 키는 sk- 로 시작합니다."
+    key, 이유 = 키정리(key)
+    if not key:
+        return False, 이유 or "키가 비어 있습니다."
     try:
         from openai import OpenAI
-        OpenAI(api_key=key.strip(), timeout=20).models.retrieve(CFG["모델"])
+        OpenAI(api_key=key, timeout=20).models.retrieve(CFG["모델"])
         return True, f"키 확인 — {CFG['모델']} 을 쓸 수 있습니다."
     except Exception as e:                        # 실패 이유를 화면까지 올린다 (키 문자열은 넣지 않는다)
         name = type(e).__name__
